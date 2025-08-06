@@ -1,0 +1,116 @@
+import cv2
+import numpy as np
+from deepface import DeepFace
+import hashlib
+import json
+import requests
+import os
+from dotenv import load_dotenv
+from datetime import datetime
+
+load_dotenv()
+PINATA_JWT = os.getenv("PINATA_JWT")
+
+def generate_faceprint(image_path):
+    """Generate a faceprint from an image."""
+    try:
+        embedding = DeepFace.represent(img_path=image_path, model_name="VGG-Face")[0]["embedding"]
+        return np.array(embedding)
+    except Exception as e:
+        print(f"Faceprint generation failed: {e}")
+        return None
+
+def hash_faceprint(faceprint):
+    """Hash faceprint to create a unique identifier."""
+    if faceprint is None:
+        return None
+    faceprint_str = json.dumps(faceprint.tolist())
+    return hashlib.sha256(faceprint_str.encode()).hexdigest()
+
+def verify_faceprint(new_image_path, stored_faceprint_hash):
+    """Compare a new image's faceprint to a stored hash."""
+    new_faceprint = generate_faceprint(new_image_path)
+    if new_faceprint is None:
+        return False
+    new_hash = hash_faceprint(new_faceprint)
+    return new_hash == stored_faceprint_hash
+
+def get_zodiac_sign(birth_date_str):
+    """Determine zodiac sign from birth date (YYYY-MM-DD)."""
+    zodiac = [
+        {"sign": "Capricorn", "start": [12, 22], "end": [1, 19], "symbol": "♑"},
+        {"sign": "Aquarius", "start": [1, 20], "end": [2, 18], "symbol": "♒"},
+        {"sign": "Pisces", "start": [2, 19], "end": [3, 20], "symbol": "♓"},
+        {"sign": "Aries", "start": [3, 21], "end": [4, 19], "symbol": "♈"},
+        {"sign": "Taurus", "start": [4, 20], "end": [5, 20], "symbol": "♉"},
+        {"sign": "Gemini", "start": [5, 21], "end": [6, 20], "symbol": "♊"},
+        {"sign": "Cancer", "start": [6, 21], "end": [7, 22], "symbol": "♋"},
+        {"sign": "Leo", "start": [7, 23], "end": [8, 22], "symbol": "♌"},
+        {"sign": "Virgo", "start": [8, 23], "end": [9, 22], "symbol": "♍"},
+        {"sign": "Libra", "start": [9, 23], "end": [10, 22], "symbol": "♎"},
+        {"sign": "Scorpio", "start": [10, 23], "end": [11, 21], "symbol": "♏"},
+        {"sign": "Sagittarius", "start": [11, 22], "end": [12, 21], "symbol": "♐"},
+    ]
+    try:
+        date = datetime.strptime(birth_date_str, "%Y-%m-%d")
+        m, d = date.month, date.day
+        for z in zodiac:
+            if (m == z["start"][0] and d >= z["start"][1]) or (m == z["end"][0] and d <= z["end"][1]):
+                return z
+        return zodiac[0]  # Default to Capricorn
+    except Exception as e:
+        print(f"Zodiac calculation failed: {e}")
+        return zodiac[0]
+
+def upload_to_ipfs(image_path, zodiac_data, faceprint_hash, quantum_meta):
+    """Upload image and metadata to IPFS."""
+    if not PINATA_JWT:
+        raise ValueError("PINATA_JWT not set in .env")
+    url = "https://api.pinata.cloud/pinning/pinFileToIPFS"
+    headers = {"Authorization": f"Bearer {PINATA_JWT}"}
+    with open(image_path, "rb") as file:
+        files = {"file": (os.path.basename(image_path), file)}
+        response = requests.post(url, headers=headers, files=files)
+        if response.status_code != 200:
+            raise Exception(f"Pinata image upload failed: {response.text}")
+        image_hash = response.json()["IpfsHash"]
+    
+    metadata = {
+        "name": f"SelfieToken ST-{image_hash[:6]}",
+        "description": "Quantum-powered biometric NFT with zodiacal parameters",
+        "image": f"ipfs://{image_hash}",
+        "attributes": [
+            {"trait_type": "Faceprint Hash", "value": faceprint_hash[:32]},
+            {"trait_type": "Quantum Metadata", "value": f"[{','.join(map(str, quantum_meta))}]"},
+            {"trait_type": "Zodiac Sign", "value": f"{zodiac_data['symbol']} {zodiac_data['sign']}"},
+            {"trait_type": "Value", "value": "$100"}
+        ]
+    }
+    metadata_response = requests.post(
+        "https://api.pinata.cloud/pinning/pinJSONToIPFS",
+        headers=headers,
+        json=metadata
+    )
+    if metadata_response.status_code != 200:
+        raise Exception(f"Pinata metadata upload failed: {metadata_response.text}")
+    return f"ipfs://{metadata_response.json()['IpfsHash']}", f"ipfs://{image_hash}"
+
+if __name__ == "__main__":
+    image_path = "frontend/images/selfie.jpg"
+    birth_date = "1984-05-01"
+    quantum_meta = [0.14, 0.78, 1.42]
+    
+    faceprint = generate_faceprint(image_path)
+    faceprint_hash = hash_faceprint(faceprint)
+    zodiac_data = get_zodiac_sign(birth_date)
+    token_uri, image_uri = upload_to_ipfs(image_path, zodiac_data, faceprint_hash, quantum_meta)
+    
+    print(f"Faceprint Hash: {faceprint_hash[:32]}...")
+    print(f"Zodiac: {zodiac_data['symbol']} {zodiac_data['sign']}")
+    print(f"Quantum Metadata: [{','.join(map(str, quantum_meta))}]")
+    print(f"Token URI: {token_uri}")
+    print(f"Image URI: {image_uri}")
+    
+    # Verify faceprint
+    is_verified = verify_faceprint(image_path, faceprint_hash)
+    print(f"Verification Status: {is_verified}")
