@@ -1,0 +1,44 @@
+name: Omni-One CI/CD
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  test-and-deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+      - name: Set up Node.js
+        uses: actions/setup-node@v3
+        with:
+          node-version: '18'
+      - name: Install Node dependencies
+        run: npm install
+      - name: Test SSI wallet
+        run: node scripts/ssi_wallet.js
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.10'
+      - name: Install Python dependencies
+        run: pip install qiskit qiskit-aer numpy scipy matplotlib requests python-dotenv astropy
+      - name: Test quantum kernel
+        env:
+          PINATA_API_KEY: ${{ secrets.PINATA_API_KEY }}
+          PINATA_API_SECRET: ${{ secrets.PINATA_API_SECRET }}
+        run: python src/omni_one_kernel.py
+      - name: Deploy AetherLatticiaNFT to Sepolia
+        env:
+          INFURA_URL: ${{ secrets.INFURA_URL }}
+          PRIVATE_KEY: ${{ secrets.PRIVATE_KEY }}
+        run: npx hardhat run scripts/termux_deploy.js --network sepolia
+      - name: Deploy SelfieToken with Lazy Minting
+        env:
+          INFURA_URL: ${{ secrets.INFURA_URL }}
+          PRIVATE_KEY: ${{ secrets.PRIVATE_KEY }}
+        run: npx hardhat run scripts/deploy_selfie.js --network sepolia
+      - name: Test Quantum-Safe Signing
+        run: python scripts/test_quantum_safe_signing.py
